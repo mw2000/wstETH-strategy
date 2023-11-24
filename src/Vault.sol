@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
 import '@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol';
-import '@compound/contracts/CTokenInterfaces.sol';
 
 // Interfaces for Lido and Compound
 interface ILido {
@@ -22,6 +21,14 @@ interface ICompound {
     function repayBorrow() external payable;
 }
 
+interface CTokenInterface {
+    function getAccountSnapshot(address account) external view returns (uint, uint, uint, uint);
+}
+
+interface IWEth {
+    function withdraw(uint wad) external;
+}
+
 
 contract Vault is ERC4626 {
     uint256 public leverageRatio;
@@ -29,7 +36,7 @@ contract Vault is ERC4626 {
     ILido public lido;
     ICompound public compound;
     IWstEth public wstEth;
-    IWeth public wEth;
+    IWEth public wEth;
     address public uniswapRouterAddress;
     address public cEthAddress;
 
@@ -43,13 +50,14 @@ contract Vault is ERC4626 {
         address _uniswapRouterAddress,
         address _wEthAddress
     ) 
-        ERC4626(IERC20(_wstEthAddress)) 
+        ERC4626(IERC20(_wstEthAddress))
+        ERC20("Vault", "VLT") 
     {
         leverageRatio = _leverageRatio;
         manager = _manager;
         lido = ILido(_lidoAddress);
         compound = ICompound(_compoundAddress);
-        wstWEth = IWstEth(_wstEthAddress);
+        wstEth = IWstEth(_wstEthAddress);
         cEthAddress = _cEthAddress;
         uniswapRouterAddress = _uniswapRouterAddress;
         wEth = IWEth(_wEthAddress);
@@ -71,7 +79,7 @@ contract Vault is ERC4626 {
         uint256 currentBorrowed = getCurrentBorrowedAmount();
 
         // Calculate the target leverage
-        uint256 totalAssets = asset.balanceOf(address(this)); // total wstETH in the vault
+        uint256 totalAssets = IERC20(address(wstEth)).balanceOf(address(this)); // total wstETH in the vault
         uint256 targetBorrowed = (totalAssets * leverageRatio) / 100;
 
         if (currentBorrowed < targetBorrowed) {
@@ -85,14 +93,14 @@ contract Vault is ERC4626 {
             // Assuming Lido's `submit` returns stETH
             uint256 stETHAmount = lido.submit{value: amountToBorrow}(address(0));
             // WST eth is wrapped
-            wstETH.wrap(stETHAmount);
+            wstEth.wrap(stETHAmount);
             // Now you have increased your wstETH holdings, thus increasing leverage
         } else if (currentBorrowed > targetBorrowed) {
             // Decrease leverage
             uint256 amountToRepay = currentBorrowed - targetBorrowed;
 
             // Trade wstETH to ETH on uniswap
-            convertWstEthToEth(amountToRepay);
+            uint256 ethAmount = convertWstEthToEth(amountToRepay);
 
             // Repay ETH loan to Compound
             compound.repayBorrow{value: ethAmount}();
@@ -103,26 +111,25 @@ contract Vault is ERC4626 {
     function convertWstEthToEth(uint256 wstEthAmount) private returns (uint256) {
         ISwapRouter uniswapRouter = ISwapRouter(uniswapRouterAddress);
 
-        // Approve the Uniswap Router to spend stETH
-        IERC20(stETHAddress).approve(uniswapRouterAddress, wstEthAmount);
+        // Approve the Uniswap Router to spend wstEth
+        IERC20(address(wstEth)).approve(uniswapRouterAddress, wstEthAmount);
 
         // Set up the parameters for the swap
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: address(wstEth),
-            tokenOut: WETHAddress,
+            tokenOut: address(wEth),
             fee: 3000, 
             recipient: address(this),
             deadline: block.timestamp,
-            amountIn: wstETHAmount,
-            amountOutMinimum: 0, // Can be replaced with a minimum amount out calculation
+            amountIn: wstEthAmount,
+            amountOutMinimum: 0,
             sqrtPriceLimitX96: 0
         });
 
         // Execute the swap
         uint256 amountOut = uniswapRouter.exactInputSingle(params);
-        return amountOut;
-
         convertWethToEth(amountOut);
+        return amountOut;
     }
 
 
@@ -137,7 +144,7 @@ contract Vault is ERC4626 {
         IERC20(address(wEth)).approve(address(wEth), wethAmount);
 
         // Convert WETH to ETH
-        weth.withdraw(wethAmount);
+        wEth.withdraw(wethAmount);
     }
 
     receive() external payable {}
