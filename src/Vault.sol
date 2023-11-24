@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
-import '@compound/contracts/CTokenInterfaces.sol';
 import '@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol';
+import '@compound/contracts/CTokenInterfaces.sol';
 
 // Interfaces for Lido and Compound
 interface ILido {
